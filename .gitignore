@@ -8,3 +8,6 @@ mlruns/
 .env
 .DS_Store
 .vscode/
+# Keep source code model package tracked
+!src/models/
+!src/models/*.py
