@@ -1,6 +1,20 @@
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
+
+LONG_VOL_STRADDLE = "LONG_VOL_STRADDLE"
+LONG_VOL_STRANGLE = "LONG_VOL_STRANGLE"
+SHORT_PREMIUM_IRON_CONDOR = "SHORT_PREMIUM_IRON_CONDOR"
+SHORT_STRANGLE = "SHORT_STRANGLE"
+NO_TRADE = "NO_TRADE"
+
+# edge_pct = predicted_vol / baseline_vol - 1
+STRADDLE_EDGE = 0.20
+STRANGLE_EDGE = 0.08
+CONDOR_EDGE = -0.15
+SHORT_STRANGLE_EDGE = -0.08
+BIAS_THRESHOLD = 0.015  # |5d return| for a directional tilt
 
 
 @dataclass
@@ -30,38 +44,40 @@ def generate_signal(
     baseline_vol: float,
     recent_return_5d: float,
 ) -> SignalDecision:
-    baseline = max(float(baseline_vol), 1e-8)
+    if not (math.isfinite(predicted_vol) and math.isfinite(baseline_vol)) or baseline_vol <= 0:
+        raise ValueError("predicted_vol and baseline_vol must be finite, with baseline_vol > 0")
+    baseline = float(baseline_vol)
     predicted = float(predicted_vol)
     edge = predicted - baseline
     edge_pct = edge / baseline
 
-    if recent_return_5d > 0.015:
+    if recent_return_5d > BIAS_THRESHOLD:
         bias = "bullish"
-    elif recent_return_5d < -0.015:
+    elif recent_return_5d < -BIAS_THRESHOLD:
         bias = "bearish"
     else:
         bias = "neutral"
 
-    if edge_pct >= 0.20:
-        strategy = "LONG_VOL_STRADDLE"
+    if edge_pct >= STRADDLE_EDGE:
+        strategy = LONG_VOL_STRADDLE
         regime = "vol_expansion"
-        rationale = "Forecasted volatility is materially above the recent realized baseline."
-    elif edge_pct >= 0.08:
-        strategy = "LONG_VOL_STRANGLE"
+        rationale = "Forecasted volatility is materially above the recent baseline (trailing 20d range-based vol)."
+    elif edge_pct >= STRANGLE_EDGE:
+        strategy = LONG_VOL_STRANGLE
         regime = "vol_expansion"
-        rationale = "Forecasted volatility is moderately above the recent realized baseline."
-    elif edge_pct <= -0.15:
-        strategy = "SHORT_PREMIUM_IRON_CONDOR"
+        rationale = "Forecasted volatility is moderately above the recent baseline (trailing 20d range-based vol)."
+    elif edge_pct <= CONDOR_EDGE:
+        strategy = SHORT_PREMIUM_IRON_CONDOR
         regime = "vol_compression"
-        rationale = "Forecasted volatility is far below the recent realized baseline."
-    elif edge_pct <= -0.08:
-        strategy = "SHORT_STRANGLE"
+        rationale = "Forecasted volatility is far below the recent baseline (trailing 20d range-based vol)."
+    elif edge_pct <= SHORT_STRANGLE_EDGE:
+        strategy = SHORT_STRANGLE
         regime = "vol_compression"
-        rationale = "Forecasted volatility is below the recent realized baseline."
+        rationale = "Forecasted volatility is below the recent baseline (trailing 20d range-based vol)."
     else:
-        strategy = "NO_TRADE"
+        strategy = NO_TRADE
         regime = "range_bound"
-        rationale = "Forecast edge is too small versus the recent realized baseline."
+        rationale = "Forecast edge is too small versus the recent baseline (trailing 20d range-based vol)."
 
     confidence = min(abs(edge_pct) / 0.25, 1.0)
     suggested_dte = max(7, horizon_days * 5)
